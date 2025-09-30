@@ -1,0 +1,462 @@
+# ============================================================================
+# requirements.txt
+# ============================================================================
+"""
+# Core Dependencies
+streamlit>=1.28.0
+pandas>=2.0.0
+numpy>=1.24.0
+plotly>=5.17.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Data Processing
+scikit-learn>=1.3.0
+scipy>=1.11.0
+
+# Optional: LLM Integration
+openai>=1.0.0
+anthropic>=0.5.0
+langchain>=0.1.0
+langgraph>=0.0.30
+
+# Optional: Vector DB
+chromadb>=0.4.0
+
+# Optional: Alert Services
+twilio>=8.10.0
+sendgrid>=6.11.0
+
+# Optional: Time Series DB
+psycopg2-binary>=2.9.0
+
+# Optional: Advanced Analytics
+tensorflow>=2.14.0  # For anomaly detection models
+torch>=2.1.0       # Alternative to TensorFlow
+
+# Optional: Medical Data Processing
+pyvcf>=0.6.8       # For genomic data
+hl7>=0.4.5         # For HL7 message parsing
+
+# Optional: Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-asyncio>=0.21.0
+
+# Optional: Authentication
+streamlit-authenticator>=0.2.3
+
+# Development
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.5.0
+"""
+
+# ============================================================================
+# config_loader.py - Centralized Configuration Management
+# ============================================================================
+
+import os
+import json
+from typing import Dict, Any, Optional
+from dataclasses import dataclass, field
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv('config/.env')
+
+
+@dataclass
+class APIEndpoints:
+    """FHIR/EHR API endpoints"""
+    patient: str = "/Patient/{id}"
+    observation: str = "/Observation?patient={id}"
+    medication: str = "/MedicationStatement?patient={id}"
+    condition: str = "/Condition?patient={id}"
+    procedure: str = "/Procedure?patient={id}"
+    allergy: str = "/AllergyIntolerance?patient={id}"
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'APIEndpoints':
+        return cls(**{k: v for k, v in data.items() if k in cls.__annotations__})
+
+
+@dataclass
+class ThresholdConfig:
+    """Medical thresholds configuration"""
+    # Glucose thresholds (mg/dL)
+    glucose_critical_low: float = 54
+    glucose_low: float = 70
+    glucose_target_low: float = 80
+    glucose_target_high: float = 180
+    glucose_high: float = 250
+    glucose_critical_high: float = 300
+    
+    # Heart rate thresholds (bpm)
+    hr_critical_low: int = 40
+    hr_low: int = 60
+    hr_normal_low: int = 60
+    hr_normal_high: int = 100
+    hr_high: int = 120
+    hr_critical_high: int = 150
+    
+    # Blood pressure thresholds (mmHg)
+    bp_systolic_low: int = 90
+    bp_systolic_high: int = 140
+    bp_diastolic_low: int = 60
+    bp_diastolic_high: int = 90
+    
+    # Oxygen saturation (%)
+    spo2_low: int = 90
+    spo2_critical: int = 85
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'ThresholdConfig':
+        """Create from nested dict structure"""
+        flat_dict = {}
+        
+        # Flatten nested structure
+        if 'glucose' in data:
+            for k, v in data['glucose'].items():
+                flat_dict[f'glucose_{k}'] = v
+        
+        if 'heart_rate' in data:
+            for k, v in data['heart_rate'].items():
+                flat_dict[f'hr_{k}'] = v
+        
+        if 'blood_pressure' in data:
+            for k, v in data['blood_pressure'].items():
+                flat_dict[f'bp_{k}'] = v
+        
+        if 'oxygen' in data:
+            for k, v in data['oxygen'].items():
+                flat_dict[f'spo2_{k}'] = v
+        
+        return cls(**{k: v for k, v in flat_dict.items() if k in cls.__annotations__})
+
+
+@dataclass
+class AlertConfig:
+    """Alert and notification configuration"""
+    enabled: bool = True
+    channels: list = field(default_factory=lambda: ["email"])
+    phone_number: str = ""
+    email: str = ""
+    email_from: str = ""
+    suppression_minutes: int = 30
+    escalation_enabled: bool = False
+    escalation_delay_minutes: int = 15
+    
+    # Twilio settings
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_phone: str = ""
+    
+    # SendGrid settings
+    sendgrid_api_key: str = ""
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'AlertConfig':
+        return cls(**{k: v for k, v in data.items() if k in cls.__annotations__})
+
+
+@dataclass
+class HospitalConfig:
+    """Complete hospital configuration"""
+    hospital_name: str
+    hospital_id: str
+    api_base_url: str
+    api_key: str
+    auth_type: str = "bearer"  # bearer, basic, apikey, oauth2
+    
+    endpoints: APIEndpoints = field(default_factory=APIEndpoints)
+    thresholds: ThresholdConfig = field(default_factory=ThresholdConfig)
+    alerts: AlertConfig = field(default_factory=AlertConfig)
+    
+    # Optional: Database configuration
+    database_url: str = ""
+    
+    # Optional: LLM configuration
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    
+    # Optional: Feature flags
+    enable_genomics: bool = True
+    enable_wearables: bool = True
+    enable_ml_predictions: bool = True
+    enable_federated_learning: bool = False
+    
+    @classmethod
+    def from_file(cls, config_path: str = "config/hospital_config.json") -> 'HospitalConfig':
+        """Load configuration from JSON file"""
+        path = Path(config_path)
+        
+        if not path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        
+        with open(path, 'r') as f:
+            data = json.load(f)
+        
+        # Override with environment variables if present
+        api_key = os.getenv('HOSPITAL_API_KEY', data.get('api_config', {}).get('api_key', ''))
+        api_url = os.getenv('HOSPITAL_API_URL', data.get('api_config', {}).get('base_url', ''))
+        
+        # Build config
+        config = cls(
+            hospital_name=data.get('hospital_name', 'Unknown Hospital'),
+            hospital_id=data.get('hospital_id', 'unknown'),
+            api_base_url=api_url,
+            api_key=api_key,
+            auth_type=data.get('api_config', {}).get('auth_type', 'bearer')
+        )
+        
+        # Load endpoints
+        if 'api_config' in data and 'endpoints' in data['api_config']:
+            config.endpoints = APIEndpoints.from_dict(data['api_config']['endpoints'])
+        
+        # Load thresholds
+        if 'thresholds' in data:
+            config.thresholds = ThresholdConfig.from_dict(data['thresholds'])
+        
+        # Load alert config
+        if 'alerts' in data:
+            config.alerts = AlertConfig.from_dict(data['alerts'])
+            # Override with env vars
+            config.alerts.twilio_account_sid = os.getenv('TWILIO_ACCOUNT_SID', config.alerts.twilio_account_sid)
+            config.alerts.twilio_auth_token = os.getenv('TWILIO_AUTH_TOKEN', config.alerts.twilio_auth_token)
+            config.alerts.sendgrid_api_key = os.getenv('SENDGRID_API_KEY', config.alerts.sendgrid_api_key)
+        
+        # Load optional settings
+        config.database_url = os.getenv('TIMESCALE_CONNECTION', data.get('database_url', ''))
+        config.openai_api_key = os.getenv('OPENAI_API_KEY', '')
+        config.anthropic_api_key = os.getenv('ANTHROPIC_API_KEY', '')
+        
+        # Feature flags
+        if 'features' in data:
+            config.enable_genomics = data['features'].get('genomics', True)
+            config.enable_wearables = data['features'].get('wearables', True)
+            config.enable_ml_predictions = data['features'].get('ml_predictions', True)
+            config.enable_federated_learning = data['features'].get('federated_learning', False)
+        
+        return config
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert config to dictionary"""
+        return {
+            'hospital_name': self.hospital_name,
+            'hospital_id': self.hospital_id,
+            'api_config': {
+                'base_url': self.api_base_url,
+                'auth_type': self.auth_type,
+                'endpoints': {
+                    'patient': self.endpoints.patient,
+                    'observation': self.endpoints.observation,
+                    'medication': self.endpoints.medication,
+                    'condition': self.endpoints.condition
+                }
+            },
+            'thresholds': {
+                'glucose': {
+                    'critical_low': self.thresholds.glucose_critical_low,
+                    'low': self.thresholds.glucose_low,
+                    'target_low': self.thresholds.glucose_target_low,
+                    'target_high': self.thresholds.glucose_target_high,
+                    'high': self.thresholds.glucose_high,
+                    'critical_high': self.thresholds.glucose_critical_high
+                },
+                'heart_rate': {
+                    'critical_low': self.thresholds.hr_critical_low,
+                    'low': self.thresholds.hr_low,
+                    'normal_low': self.thresholds.hr_normal_low,
+                    'normal_high': self.thresholds.hr_normal_high,
+                    'high': self.thresholds.hr_high,
+                    'critical_high': self.thresholds.hr_critical_high
+                }
+            },
+            'alerts': {
+                'enabled': self.alerts.enabled,
+                'channels': self.alerts.channels,
+                'phone_number': self.alerts.phone_number,
+                'email': self.alerts.email
+            },
+            'features': {
+                'genomics': self.enable_genomics,
+                'wearables': self.enable_wearables,
+                'ml_predictions': self.enable_ml_predictions,
+                'federated_learning': self.enable_federated_learning
+            }
+        }
+    
+    def save(self, config_path: str = "config/hospital_config.json"):
+        """Save configuration to file"""
+        path = Path(config_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(path, 'w') as f:
+            json.dump(self.to_dict(), f, indent=2)
+    
+    def validate(self) -> Dict[str, bool]:
+        """Validate configuration"""
+        checks = {
+            'api_url_set': bool(self.api_base_url),
+            'api_key_set': bool(self.api_key),
+            'hospital_name_set': bool(self.hospital_name),
+            'valid_auth_type': self.auth_type in ['bearer', 'basic', 'apikey', 'oauth2']
+        }
+        
+        if self.alerts.enabled:
+            checks['alert_config'] = bool(
+                (self.alerts.phone_number and self.alerts.twilio_account_sid) or
+                (self.alerts.email and self.alerts.sendgrid_api_key)
+            )
+        
+        return checks
+    
+    def is_valid(self) -> bool:
+        """Check if configuration is valid"""
+        return all(self.validate().values())
+
+
+# ============================================================================
+# Usage Example
+# ============================================================================
+
+def load_hospital_config(config_file: str = "config/hospital_config.json") -> HospitalConfig:
+    """
+    Load and validate hospital configuration
+    
+    Args:
+        config_file: Path to configuration file
+        
+    Returns:
+        HospitalConfig object
+        
+    Raises:
+        FileNotFoundError: If config file doesn't exist
+        ValueError: If configuration is invalid
+    """
+    try:
+        config = HospitalConfig.from_file(config_file)
+        
+        # Validate
+        validation = config.validate()
+        if not all(validation.values()):
+            failed_checks = [k for k, v in validation.items() if not v]
+            raise ValueError(f"Configuration validation failed: {', '.join(failed_checks)}")
+        
+        return config
+        
+    except FileNotFoundError:
+        print(f"⚠️ Configuration file not found: {config_file}")
+        print("Creating default configuration...")
+        
+        # Create default config
+        default_config = HospitalConfig(
+            hospital_name="Demo Hospital",
+            hospital_id="demo",
+            api_base_url="https://hapi.fhir.org/baseR4",
+            api_key="demo_key"
+        )
+        
+        default_config.save(config_file)
+        print(f"✅ Default configuration created at {config_file}")
+        print("Please update the configuration with your hospital's details.")
+        
+        return default_config
+
+
+# ============================================================================
+# Streamlit Integration Helper
+# ============================================================================
+
+def create_config_ui():
+    """Create Streamlit UI for configuration"""
+    import streamlit as st
+    
+    st.sidebar.header("⚙️ Configuration")
+    
+    with st.sidebar.expander("Hospital Settings", expanded=False):
+        hospital_name = st.text_input("Hospital Name", value="Demo Hospital")
+        api_url = st.text_input("API Base URL", value="https://hapi.fhir.org/baseR4")
+        api_key = st.text_input("API Key", type="password")
+        auth_type = st.selectbox("Auth Type", ["bearer", "apikey", "basic", "oauth2"])
+    
+    with st.sidebar.expander("Thresholds", expanded=False):
+        st.subheader("Glucose (mg/dL)")
+        col1, col2 = st.columns(2)
+        with col1:
+            glucose_low = st.number_input("Low", value=70)
+            glucose_high = st.number_input("High", value=250)
+        with col2:
+            glucose_critical_low = st.number_input("Critical Low", value=54)
+            glucose_critical_high = st.number_input("Critical High", value=300)
+    
+    with st.sidebar.expander("Alerts", expanded=False):
+        enable_alerts = st.checkbox("Enable Alerts", value=True)
+        if enable_alerts:
+            alert_channels = st.multiselect(
+                "Channels",
+                ["email", "sms", "slack"],
+                default=["email"]
+            )
+            alert_email = st.text_input("Alert Email")
+            alert_phone = st.text_input("Alert Phone")
+    
+    # Build config from UI
+    config = HospitalConfig(
+        hospital_name=hospital_name,
+        hospital_id="custom",
+        api_base_url=api_url,
+        api_key=api_key,
+        auth_type=auth_type
+    )
+    
+    # Update thresholds
+    config.thresholds.glucose_low = glucose_low
+    config.thresholds.glucose_high = glucose_high
+    config.thresholds.glucose_critical_low = glucose_critical_low
+    config.thresholds.glucose_critical_high = glucose_critical_high
+    
+    # Update alerts
+    if enable_alerts:
+        config.alerts.enabled = True
+        config.alerts.channels = alert_channels
+        config.alerts.email = alert_email
+        config.alerts.phone_number = alert_phone
+    
+    if st.sidebar.button("💾 Save Configuration"):
+        config.save()
+        st.sidebar.success("✅ Configuration saved!")
+    
+    return config
+
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+if __name__ == "__main__":
+    # Test configuration loading
+    print("Testing configuration loader...")
+    
+    try:
+        config = load_hospital_config()
+        print(f"\n✅ Configuration loaded successfully!")
+        print(f"Hospital: {config.hospital_name}")
+        print(f"API URL: {config.api_base_url}")
+        print(f"Valid: {config.is_valid()}")
+        
+        # Print thresholds
+        print(f"\nGlucose Thresholds:")
+        print(f"  Low: {config.thresholds.glucose_low} mg/dL")
+        print(f"  High: {config.thresholds.glucose_high} mg/dL")
+        
+        # Print validation
+        print(f"\nValidation Results:")
+        for check, status in config.validate().items():
+            status_icon = "✅" if status else "❌"
+            print(f"  {status_icon} {check}: {status}")
+        
+    except Exception as e:
+        print(f"❌ Error: {str(e)}")
