@@ -1,0 +1,36 @@
+{
+  "hospital_name": "Your Hospital Name",
+  "api_config": {
+    "base_url": "https://your-fhir-server.com/fhir",
+    "auth_type": "bearer",
+    "endpoints": {
+      "patient": "/Patient/{id}",
+      "observation": "/Observation?patient={id}",
+      "medication": "/MedicationStatement?patient={id}",
+      "condition": "/Condition?patient={id}"
+    }
+  },
+  "thresholds": {
+    "glucose": {
+      "critical_low": 54,
+      "low": 70,
+      "target_low": 80,
+      "target_high": 180,
+      "high": 250,
+      "critical_high": 300
+    },
+    "heart_rate": {
+      "critical_low": 40,
+      "low": 60,
+      "normal_high": 100,
+      "high": 120,
+      "critical_high": 150
+    }
+  },
+  "alerts": {
+    "enabled": true,
+    "channels": ["sms", "email"],
+    "phone_number": "+1234567890",
+    "email": "alerts@hospital.com"
+  }
+}
